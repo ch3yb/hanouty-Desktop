@@ -1,18 +1,34 @@
 {
-  "name": "desktop",
+  "name": "hanouty",
   "version": "1.0.0",
+  "description": "Hanouty Application",
+  "author": { "name": "Your Name", "email": "you@example.com" },
   "main": "main.js",
   "scripts": {
-    "start": "electron . --trace-warnings",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "electron .",
+    "dev": "electron .",
+    "dist": "electron-builder"
   },
-  "author": "chouaib",
-  "license": "ISC",
-  "description": "",
+  "build": {
+    "appId": "com.hanouty.app",
+    "productName": "Hanouty",
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": "icon.png",
+      "category": "Utility"
+    },
+    "asarUnpack": [
+      "backend/**"
+    ],
+    "extraResources": [
+      { "from": "../backend/hanouty-backend", "to": "backend/hanouty-backend" },
+      { "from": "../backend/.env", "to": "backend/.env" },
+      { "from": "../frontend/dist", "to": "frontend/dist" }
+    ]
+  },
   "devDependencies": {
-    "electron": "^37.2.2"
-  },
-  "dependencies": {
+    "electron": "^37.2.2",
+    "electron-builder": "^26.0.12",
     "tree-kill": "^1.2.2"
   }
 }

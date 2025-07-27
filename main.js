@@ -1,11 +1,26 @@
 const { app, BrowserWindow } = require('electron');
 const { spawn } = require('child_process');
-const kill = require('tree-kill');
 const path = require('path');
 
+app.commandLine.appendSwitch('no-sandbox'); // Fix the Linux sandbox crash
+
 let goProcess = null;
-let frontendProcess = null;
 let mainWindow = null;
+
+const isDev = !app.isPackaged;
+const RESOURCES_PATH = isDev ? path.join(__dirname, '..') : process.resourcesPath;
+
+function resolveFrontendIndex() {
+    return isDev
+        ? path.join(__dirname, '../frontend/dist/index.html')   // dev: you built vite locally
+        : path.join(RESOURCES_PATH, 'frontend', 'dist', 'index.html'); // packaged
+}
+
+function resolveBackendBinary() {
+    return isDev
+        ? path.join(__dirname, '../backend/hanouty-backend')
+        : path.join(RESOURCES_PATH, 'backend', 'hanouty-backend');
+}
 
 function createWindow() {
     mainWindow = new BrowserWindow({
@@ -16,145 +31,40 @@ function createWindow() {
             contextIsolation: true,
         },
     });
-    mainWindow.maximize()
-    // Load the frontend URL with error handling
-    mainWindow.loadURL('http://localhost:5173').catch(err => {
-        console.error('Failed to load frontend:', err);
-        // You might want to show an error page or retry here
+    mainWindow.maximize();
+
+    const indexPath = resolveFrontendIndex();
+    mainWindow.loadFile(indexPath).catch(err => {
+        console.error('Failed to load frontend:', err, 'path=', indexPath);
     });
 
-    // Handle window closed event
-    mainWindow.on('closed', () => {
-        mainWindow = null;
-    });
+    mainWindow.on('closed', () => (mainWindow = null));
 }
 
 function startBackend() {
-    try {
-        goProcess = spawn('go', ['run', 'main.go'], {
-            cwd: path.join(__dirname, '../backend'),
-            stdio: ['inherit', 'pipe', 'pipe'],
-        });
+    const backendPath = resolveBackendBinary();
 
-        goProcess.stdout.on('data', (data) => {
-            console.log(`Go backend: ${data}`);
-        });
+    // set cwd to the backend folder so it can find .env placed next to it
+    const cwd = path.dirname(backendPath);
 
-        goProcess.stderr.on('data', (data) => {
-            console.error(`Go backend error: ${data}`);
-        });
+    goProcess = spawn(backendPath, [], { cwd });
 
-        goProcess.on('error', (err) => {
-            console.error('Failed to start Go backend:', err);
-        });
-
-        goProcess.on('close', (code) => {
-            console.log(`Go backend process exited with code ${code}`);
-            if (code !== 0) {
-                // Handle backend crash
-            }
-        });
-
-        return goProcess;
-    } catch (err) {
-        console.error('Error starting Go backend:', err);
-        return null;
-    }
-}
-
-function startFrontend() {
-    try {
-        frontendProcess = spawn('pnpm', ['dev'], {
-            cwd: path.join(__dirname, '../frontend'),
-            stdio: ['inherit', 'pipe', 'pipe'],
-        });
-
-        frontendProcess.stdout.on('data', (data) => {
-            console.log(`Frontend: ${data}`);
-        });
-
-        frontendProcess.stderr.on('data', (data) => {
-            console.error(`Frontend error: ${data}`);
-        });
-
-        frontendProcess.on('error', (err) => {
-            console.error('Failed to start frontend:', err);
-        });
-
-        frontendProcess.on('close', (code) => {
-            console.log(`Frontend process exited with code ${code}`);
-            if (code !== 0) {
-                // Handle frontend crash
-            }
-        });
-
-        return frontendProcess;
-    } catch (err) {
-        console.error('Error starting frontend:', err);
-        return null;
-    }
-}
-
-async function cleanExit() {
-    console.log('Cleaning up processes...');
-
-    const killProcess = (process, name) => {
-        return new Promise((resolve) => {
-            if (process && process.pid) {
-                kill(process.pid, 'SIGKILL', (err) => {
-                    if (err) {
-                        console.error(`Failed to kill ${name} process:`, err);
-                    } else {
-                        console.log(`${name} process killed`);
-                        process = null;
-                        resolve();
-                        return;
-                    }
-                });
-            } else {
-                resolve();
-            }
-        });
-    };
-
-    await killProcess(goProcess, 'Go');
-    await killProcess(frontendProcess, 'Frontend');
-
-    if (mainWindow) {
-        mainWindow.close();
-    }
+    goProcess.stdout.on('data', (data) => console.log(`Go backend: ${data}`));
+    goProcess.stderr.on('data', (data) => console.error(`Go backend error: ${data}`));
+    goProcess.on('close', (code) => console.log(`Go backend exited with code ${code}`));
+    goProcess.on('error', (err) => console.error('Failed to start Go backend:', err));
 }
 
 app.whenReady().then(() => {
     startBackend();
-    startFrontend();
-
-    // Give the frontend some time to start
-    setTimeout(createWindow, 3000);
+    createWindow();
 });
 
-app.on('before-quit', async () => {
-    await cleanExit();
-});
-
-app.on('window-all-closed', async () => {
-    if (process.platform !== 'darwin') {
-        await cleanExit();
-        app.quit();
-    }
+app.on('window-all-closed', () => {
+    if (goProcess) goProcess.kill();
+    if (process.platform !== 'darwin') app.quit();
 });
 
 app.on('activate', () => {
-    if (mainWindow === null) {
-        createWindow();
-    }
-});
-
-// Handle unexpected errors
-process.on('uncaughtException', (err) => {
-    console.error('Uncaught exception:', err);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('Unhandled rejection at:', promise, 'reason:', reason);
+    if (mainWindow === null) createWindow();
 });
