@@ -1,6 +1,12 @@
 const { app, BrowserWindow } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
+const dns = require('dns');
+const fs = require("fs");
+const util = require("node:util");
+
+// global variables
+let win
 
 app.commandLine.appendSwitch('no-sandbox'); // Fix the Linux sandbox crash
 
@@ -30,6 +36,7 @@ function createWindow() {
             nodeIntegration: false,
             contextIsolation: true,
         },
+        title:"Hanouti | Manage My Store"
     });
     mainWindow.maximize();
 
@@ -41,22 +48,71 @@ function createWindow() {
     mainWindow.on('closed', () => (mainWindow = null));
 }
 
-function startBackend() {
-    const backendPath = resolveBackendBinary();
+function createErrWindow(isNew) {
+    if (isNew){
+    win = new BrowserWindow({
+        width: 800,
+        height: 600,
+        title:"no connection!"
+    })
+    win.loadFile('error.html')
+    }
+    setTimeout(async ()=>{
+        if (await isOnline()){
+            win?.close()
+            createWindow()
+        }else {
+            createErrWindow(false)
+        }
+    },10000)
 
-    // set cwd to the backend folder so it can find .env placed next to it
-    const cwd = path.dirname(backendPath);
-
-    goProcess = spawn(backendPath, [], { cwd });
-
-    goProcess.stdout.on('data', (data) => console.log(`Go backend: ${data}`));
-    goProcess.stderr.on('data', (data) => console.error(`Go backend error: ${data}`));
-    goProcess.on('close', (code) => console.log(`Go backend exited with code ${code}`));
-    goProcess.on('error', (err) => console.error('Failed to start Go backend:', err));
 }
 
-app.whenReady().then(() => {
-    startBackend();
+const isOnline = async () => {
+    try {
+        const lookup = util.promisify(dns.lookup);
+        await lookup('cloudflare.com');
+        return true;
+    } catch (err) {
+        return false;
+    }
+};
+
+const startBackend =  () => {
+    try {
+        const backendPath = resolveBackendBinary();
+        const cwd = path.dirname(backendPath);
+
+        if (!fs.existsSync(backendPath)) {
+            throw new Error(`Backend binary not found at ${backendPath}`);
+        }
+
+        goProcess = spawn(backendPath, [], { cwd });
+
+        const startupTimeout = setTimeout(() => {
+            console.error('Backend startup timeout');
+            goProcess.kill();
+        }, 10000);
+
+        goProcess.on('spawn', () => {
+            clearTimeout(startupTimeout);
+            console.log('Backend process started successfully');
+        });
+
+    } catch (err) {
+        console.error('Failed to start backend: ',err)
+        throw err
+    }
+}
+
+app.whenReady().then(async () => {
+    const online = await isOnline();
+    if (!online) {
+        createErrWindow(true);
+        return;
+    }
+
+   startBackend();
     createWindow();
 });
 
@@ -64,7 +120,15 @@ app.on('window-all-closed', () => {
     if (goProcess) goProcess.kill();
     if (process.platform !== 'darwin') app.quit();
 });
-
-app.on('activate', () => {
-    if (mainWindow === null) createWindow();
+app.on('before-quit', () => {
+    if (goProcess) goProcess.kill();
+})
+app.on('activate', async () => {
+    if (mainWindow === null) {
+        if (await isOnline()) {
+            createWindow();
+        } else {
+            createErrWindow(true);
+        }
+    }
 });
